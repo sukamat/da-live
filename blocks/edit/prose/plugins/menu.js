@@ -1,3 +1,4 @@
+import getPathDetails from '../../../shared/pathDetails.js';
 import {
   DOMParser,
   Plugin,
@@ -26,6 +27,23 @@ import openPrompt from '../../da-palette/da-palette.js';
 import openLibrary from '../../da-library/da-library.js';
 
 import insertTable from '../table.js';
+import { daFetch } from '../../../shared/utils.js';
+import { DA_ORIGIN } from '../../../shared/constants.js';
+
+async function hasAssets() {
+  const { repo, owner } = getPathDetails();
+  if (!(repo || owner)) return false;
+  const resp = await daFetch(`${DA_ORIGIN}/config/${owner}/${repo}`);
+  if (!resp.ok) return false;
+  const json = await resp.json();
+  const assetsConfig = json.data.reduce((acc, conf) => {
+    if (conf.key === 'aem.repositoryId' || conf.key === 'ims.org') {
+      acc[conf.key] = conf.value;
+    }
+    return acc;
+  }, {});
+  return assetsConfig['aem.repositoryId'] && assetsConfig['ims.org'];
+}
 
 function canInsert(state, nodeType) {
   const { $from } = state.selection;
@@ -298,13 +316,16 @@ function getTextBlocks(marks, nodes) {
   ];
 }
 
-function getMenu(view) {
+async function getMenu(view) {
   const menu = document.createElement('div');
   menu.className = 'ProseMirror-menubar';
 
   const { marks, nodes } = view.state.schema;
   const editTable = getTableMenu();
   const textBlocks = getTextBlocks(marks, nodes);
+  const canAsset = await hasAssets();
+
+  let assetsMod;
 
   const textMenu = [
     new Dropdown(textBlocks, {
@@ -330,6 +351,16 @@ function getMenu(view) {
       enable() { return true; },
       run() { openLibrary(); },
       class: 'open-library',
+    }),
+    new MenuItem({
+      title: 'Open assets',
+      label: 'Assets',
+      enable() { return canAsset; },
+      async run() {
+        if (!assetsMod) assetsMod = await import('../../da-assets/da-assets.js');
+        assetsMod.default();
+      },
+      class: 'open-assets',
     }),
     new Dropdown(editTable, {
       label: 'Edit Block',
@@ -388,16 +419,15 @@ function getMenu(view) {
 export default new Plugin({
   props: {
     handleDOMEvents: {
-      // eslint-disable-next-line no-unused-vars
-      focus: (view, _event) => {
+      focus: (view) => {
         view.root.querySelectorAll('da-palette').forEach((palette) => {
           palette.updateSelection();
         });
       },
     },
   },
-  view: (view) => {
-    const { menu, update } = getMenu(view);
+  view: async (view) => {
+    const { menu, update } = await getMenu(view);
     const palettes = document.createElement('div');
     palettes.className = 'da-palettes';
     view.dom.insertAdjacentElement('beforebegin', menu);
